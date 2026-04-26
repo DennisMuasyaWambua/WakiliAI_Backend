@@ -14,7 +14,7 @@ SECRET_KEY = 'django-insecure-6v0o-=xq=1)ur23_jst1(_q6b$=uh_l-$oin)!i02(&3)(9z3i
 DEBUG = True
 
 ALLOWED_HOSTS = [
-    'wakiliaibackend-production.up.railway.app'
+    'wakiliaibackend-production.up.railway.app',
     'localhost',
     '127.0.0.1',
 ]
