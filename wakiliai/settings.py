@@ -16,9 +16,11 @@ SECRET_KEY = 'django-insecure-6v0o-=xq=1)ur23_jst1(_q6b$=uh_l-$oin)!i02(&3)(9z3i
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
-
-
+ALLOWED_HOSTS = [
+    'wakilaibackend-production.up.railway.app',
+    'localhost',
+    '127.0.0.1',
+]
 # Application definition
 
 INSTALLED_APPS = [
