@@ -144,7 +144,7 @@ class LoginAPIView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED
             )
 
-        if not user.is_active or not user.is_activated:
+        if not user.is_active:
             return Response(
                 {"success": False, "message": "Account not activated. Check your email."},
                 status=status.HTTP_403_FORBIDDEN
