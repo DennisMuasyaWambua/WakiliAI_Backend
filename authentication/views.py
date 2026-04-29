@@ -16,15 +16,20 @@ from django.utils.encoding import force_str
 from django.utils import timezone
 from django.contrib.auth.tokens import default_token_generator
 
-from authentication.tasks import send_activation_email_async, send_otp_email_async, send_reset_password_email_async
+from authentication.tasks import send_activation_email_async, send_firm_owner_invite_async, send_otp_email_async, send_reset_password_email_async, send_team_invite_async
 
-from .models import ActivationToken, PasswordResetToken, LoginOtp
+from .models import ActivationToken, AdvocateProfile, Firm, FirmInvite, PasswordResetToken, LoginOtp, Role
 from .serializers import (
+    ActivateFromInviteSerializer,
+    CreateFirmSerializer,
+    FirmInviteSerializer,
+    FirmSerializer,
     RegisterSerializer,
     LoginSerializer,
     OTPVerificationSerializer,
     ResetPasswordSerializer,
     ConfirmResetPasswordSerializer,
+    SendTeamInviteSerializer,
 )
 from .utils import (
     build_activation_link,
@@ -32,6 +37,8 @@ from .utils import (
     encode_uid,
     generate_otp,
 )
+
+from django.conf import settings
 
 User = get_user_model()
 
@@ -360,3 +367,451 @@ class ConfirmResetPasswordAPIView(APIView):
             {"success": True, "message": "Password reset successfully. You can now log in."},
             status=status.HTTP_200_OK
         )
+    
+
+def build_invite_link(request, token):
+    frontend_url = settings.FRONTEND_URL
+    return f"{frontend_url}/activate?token={token}"
+
+
+# ==============================================
+# SUPER ADMIN — Create Firm + Invite Owner
+# ==============================================
+class CreateFirmAPIView(APIView):
+    """
+    Only Django superusers can hit this.
+    Creates the Firm tenant and shoots an invite to the senior-most person.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not request.user.is_superuser:
+            return Response(
+                {"success": False, "message": "Only super admins can create firms."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        serializer = CreateFirmSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {"success": False, "errors": serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        data = serializer.validated_data
+
+        if Firm.objects.filter(email=data["firm_email"]).exists():
+            return Response(
+                {"success": False, "message": "A firm with this email already exists."},
+                status=status.HTTP_409_CONFLICT
+            )
+
+        if Firm.objects.filter(name=data["firm_name"]).exists():
+            return Response(
+                {"success": False, "message": "A firm with this name already exists."},
+                status=status.HTTP_409_CONFLICT
+            )
+
+        # Create firm
+        firm = Firm.objects.create(
+            name=data["firm_name"],
+            firm_type=data["firm_type"],
+            email=data["firm_email"],
+            phone=data.get("firm_phone", ""),
+            address=data.get("firm_address", ""),
+        )
+
+        # Create invite for the owner
+        invite = FirmInvite.objects.create(
+            firm=firm,
+            email=data["owner_email"],
+            role=data["owner_role"],
+            invited_by=request.user,
+            expires_at=timezone.now() + timedelta(hours=48),
+        )
+
+        invite_link = build_invite_link(request, invite.token)
+        send_firm_owner_invite_async.delay(
+            first_name="",           # we don't know their name yet
+            email=invite.email,
+            firm_name=firm.name,
+            role_name=invite.role.name,
+            invite_link=invite_link
+        )
+
+        return Response(
+            {
+                "success": True,
+                "message": f"Firm '{firm.name}' created. Invite sent to {invite.email}.",
+                "data": {
+                    "firm_id": str(firm.id),
+                },
+            },
+            status=status.HTTP_201_CREATED
+        )
+
+
+# ==============================================
+# OWNER — Activate Account from Invite
+# ==============================================
+class ActivateOwnerAPIView(APIView):
+    """
+    The senior-most invitee activates their account.
+    They automatically become firm.owner.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = ActivateFromInviteSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {"success": False, "errors": serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        data = serializer.validated_data
+
+        try:
+            invite = FirmInvite.objects.select_related("firm", "role").get(
+                token=data["token"], is_used=False
+            )
+        except FirmInvite.DoesNotExist:
+            return Response(
+                {"success": False, "message": "Invalid or already used invite token."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if invite.is_expired():
+            return Response(
+                {"success": False, "message": "This invite link has expired."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Guard: owner slot must be empty (only 1 owner per firm)
+        if invite.firm.owner is not None:
+            return Response(
+                {"success": False, "message": "This firm already has an owner."},
+                status=status.HTTP_409_CONFLICT
+            )
+
+        if User.objects.filter(email=invite.email).exists():
+            return Response(
+                {"success": False, "message": "An account with this email already exists."},
+                status=status.HTTP_409_CONFLICT
+            )
+
+        if User.objects.filter(username=data["username"]).exists():
+            return Response(
+                {"success": False, "message": "Username already taken."},
+                status=status.HTTP_409_CONFLICT
+            )
+
+        # Create user
+        user = User.objects.create_user(
+            username=data["username"],
+            email=invite.email,
+            first_name=data["first_name"],
+            last_name=data["last_name"],
+            mobile_number=data["mobile_number"],
+            password=data["password"],
+            firm=invite.firm,
+            is_activated=1,
+            status=1,
+        )
+        user.role.add(invite.role)
+
+        # Make them the firm owner
+        invite.firm.owner = user
+        invite.firm.save(update_fields=["owner"])
+
+        # Mark invite used
+        invite.is_used = True
+        invite.save(update_fields=["is_used"])
+
+        AdvocateProfile.objects.create(user=user)
+
+        tokens = get_tokens_for_user(user)
+        return Response(
+            {
+                "success": True,
+                "message": "Account activated. You are now the firm owner.",
+                "data": {
+                    "firm_id": str(invite.firm.id),
+                    "firm_name": invite.firm.name,
+                    "tokens": tokens,
+                },
+            },
+            status=status.HTTP_201_CREATED
+        )
+
+
+# ==============================================
+# OWNER / MANAGER — Invite a Team Member
+# ==============================================
+class SendTeamInviteAPIView(APIView):
+    """
+    Firm owner or any user with manage_users permission
+    can invite team members scoped to their own firm.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not request.user.can_onboard():
+            return Response(
+                {"success": False, "message": "You do not have permission to invite users."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        serializer = SendTeamInviteSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {"success": False, "errors": serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        data = serializer.validated_data
+        role = data["role_id"]
+
+        # Enforce hierarchy — can't invite equal or higher
+        if role.access_level >= request.user.get_access_level():
+            return Response(
+                {
+                    "success": False,
+                    "message": "You cannot invite a user with an equal or higher role than yours.",
+                },
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Role must belong to same firm or be a system role
+        if role.firm and role.firm != request.user.firm:
+            return Response(
+                {"success": False, "message": "This role does not belong to your firm."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Prevent duplicate active invite
+        if FirmInvite.objects.filter(
+            firm=request.user.firm, email=data["email"], is_used=False
+        ).exists():
+            return Response(
+                {"success": False, "message": "An active invite already exists for this email."},
+                status=status.HTTP_409_CONFLICT
+            )
+
+        # Prevent inviting someone already in the firm
+        if User.objects.filter(firm=request.user.firm, email=data["email"]).exists():
+            return Response(
+                {"success": False, "message": "This user is already a member of your firm."},
+                status=status.HTTP_409_CONFLICT
+            )
+
+        invite = FirmInvite.objects.create(
+            firm=request.user.firm,
+            email=data["email"],
+            role=role,
+            invited_by=request.user,
+            expires_at=timezone.now() + timedelta(hours=48),
+        )
+
+        invite_link = build_invite_link(request, invite.token)
+        send_team_invite_async.delay(
+            email=invite.email,
+            firm_name=request.user.firm.name,
+            role_name=role.name,
+            invite_link=invite_link,
+            
+        )
+
+        return Response(
+            {
+                "success": True,
+                "message": f"Invite sent to {invite.email} for role '{role.name}'.",
+            },
+            status=status.HTTP_201_CREATED
+        )
+
+
+# ==============================================
+# TEAM MEMBER — Activate Account from Invite
+# ==============================================
+class ActivateMemberAPIView(APIView):
+    """Same activation flow as owner but for non-owner team members."""
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = ActivateFromInviteSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {"success": False, "errors": serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        data = serializer.validated_data
+
+        try:
+            invite = FirmInvite.objects.select_related("firm", "role", "invited_by").get(
+                token=data["token"], is_used=False
+            )
+        except FirmInvite.DoesNotExist:
+            return Response(
+                {"success": False, "message": "Invalid or already used invite token."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if invite.is_expired():
+            return Response(
+                {"success": False, "message": "This invite link has expired."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if User.objects.filter(email=invite.email).exists():
+            return Response(
+                {"success": False, "message": "An account with this email already exists."},
+                status=status.HTTP_409_CONFLICT
+            )
+
+        if User.objects.filter(username=data["username"]).exists():
+            return Response(
+                {"success": False, "message": "Username already taken."},
+                status=status.HTTP_409_CONFLICT
+            )
+
+        user = User.objects.create_user(
+            username=data["username"],
+            email=invite.email,
+            first_name=data["first_name"],
+            last_name=data["last_name"],
+            mobile_number=data["mobile_number"],
+            password=data["password"],
+            firm=invite.firm,
+            created_by=invite.invited_by,
+            is_activated=1,
+            status=1,
+        )
+        user.role.add(invite.role)
+
+        invite.is_used = True
+        invite.save(update_fields=["is_used"])
+
+        AdvocateProfile.objects.create(user=user)
+
+        tokens = get_tokens_for_user(user)
+        return Response(
+            {
+                "success": True,
+                "message": "Account activated. Welcome to your firm.",
+                "data": {
+                    "firm_id": str(invite.firm.id),
+                    "firm_name": invite.firm.name,
+                    "tokens": tokens,
+                },
+            },
+            status=status.HTTP_201_CREATED
+        )
+
+
+# ==============================================
+# FIRM — Details + Update
+# ==============================================
+class FirmDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not request.user.firm:
+            return Response(
+                {"success": False, "message": "You are not associated with any firm."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        return Response(
+            {"success": True, "data": FirmSerializer(request.user.firm).data},
+            status=status.HTTP_200_OK
+        )
+
+    def patch(self, request):
+        if not request.user.is_firm_owner():
+            return Response(
+                {"success": False, "message": "Only the firm owner can update firm details."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        serializer = FirmSerializer(request.user.firm, data=request.data, partial=True)
+        if not serializer.is_valid():
+            return Response(
+                {"success": False, "errors": serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        serializer.save()
+        return Response(
+            {"success": True, "message": "Firm updated.", "data": serializer.data},
+            status=status.HTTP_200_OK
+        )
+
+
+# ==============================================
+# FIRM — Members List
+# ==============================================
+class FirmMembersAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not request.user.has_permission("view_users"):
+            return Response(
+                {"success": False, "message": "You do not have permission to view members."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        members = (
+            User.objects
+            .filter(firm=request.user.firm)
+            .prefetch_related("role")
+            .order_by("-date_joined")
+        )
+        data = [
+            {
+                "id": u.id,
+                "full_name": u.get_full_name(),
+                "email": u.email,
+                "mobile_number": u.mobile_number,
+                "roles": list(u.role.values_list("short_name", flat=True)),
+                "access_level": u.get_access_level(),
+                "is_activated": u.is_activated,
+                "status": u.status,
+                "date_joined": u.date_joined,
+            }
+            for u in members
+        ]
+        return Response({"success": True, "data": data}, status=status.HTTP_200_OK)
+
+
+# ==============================================
+# FIRM — Pending Invites
+# ==============================================
+class FirmInviteListAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not request.user.can_onboard():
+            return Response(
+                {"success": False, "message": "Permission denied."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        invites = (
+            FirmInvite.objects
+            .filter(firm=request.user.firm, is_used=False)
+            .select_related("role", "invited_by")
+            .order_by("-created_at")
+        )
+        return Response(
+            {"success": True, "data": FirmInviteSerializer(invites, many=True).data},
+            status=status.HTTP_200_OK
+        )
+
+# ==============================================
+# Roles — List
+# ==============================================
+class RoleListAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        roles = Role.objects.filter(is_active=True).values(
+            "id", "name", "short_name", "access_level"
+        )
+        return Response({"success": True, "data": list(roles)}, status=status.HTTP_200_OK)

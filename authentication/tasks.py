@@ -101,3 +101,72 @@ def send_reset_password_email_async(first_name, email, reset_link):
     except Exception as e:
         print("Gmail SMTP ERROR [reset-password]:", str(e))
         return False
+    
+
+# =========================
+# Firm Owner Invite Email
+# =========================
+@shared_task
+def send_firm_owner_invite_async(first_name, email, firm_name, role_name, invite_link):
+    try:
+        title = "You've been onboarded to WakiliAI"
+        html_content = render_to_string(
+            "emails/firm_owner_invite.html",
+            {
+                "title": title,
+                "username": first_name,
+                "firm_name": firm_name,
+                "role_name": role_name,
+                "message": f"You have been onboarded as {role_name} at {firm_name}. Click the button below to activate your account.",
+                "action": "Activate Account",
+                "invite_link": invite_link,
+                "now": datetime.utcnow(),
+            },
+        )
+
+        msg = EmailMultiAlternatives(
+            subject=title,
+            body=f"You have been onboarded as {role_name} at {firm_name}. Click the link to activate your account: {invite_link}. This link expires in 48 hours.",
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[email],
+        )
+        msg.attach_alternative(html_content, "text/html")
+        msg.send()
+        return True
+    except Exception as e:
+        print("Gmail SMTP ERROR [firm-owner-invite]:", str(e))
+        return False
+
+
+# =========================
+# Team Invite Email
+# =========================
+@shared_task
+def send_team_invite_async(email, firm_name, role_name, invite_link):
+    try:
+        title = f"You've been invited to join {firm_name} on WakiliAI"
+        html_content = render_to_string(
+            "emails/team_invite.html",
+            {
+                "title": title,
+                "firm_name": firm_name,
+                "role_name": role_name,
+                "message": f"You have been invited as {role_name} at {firm_name}. Click the button below to activate your account.",
+                "action": "Accept Invitation",
+                "invite_link": invite_link,
+                "now": datetime.utcnow(),
+            },
+        )
+
+        msg = EmailMultiAlternatives(
+            subject=title,
+            body=f"You have been invited as {role_name} at {firm_name}. Click the link to activate your account: {invite_link}. This link expires in 48 hours.",
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[email],
+        )
+        msg.attach_alternative(html_content, "text/html")
+        msg.send()
+        return True
+    except Exception as e:
+        print("Gmail SMTP ERROR [team-invite]:", str(e))
+        return False
