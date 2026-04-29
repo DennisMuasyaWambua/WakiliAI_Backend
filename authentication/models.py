@@ -10,6 +10,45 @@ from django.utils import timezone
 from datetime import timedelta
 
 
+
+# =========================
+# ===== Firm Model (Tenant)
+# =========================
+import uuid
+
+class Firm(models.Model):
+    FIRM_TYPE_CHOICES = [
+        ("big_law", "Big Law Firm"),
+        ("mid_size", "Mid-Sized Firm"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)  # tenant UUID
+    name = models.CharField(max_length=255, unique=True)
+    firm_type = models.CharField(max_length=20, choices=FIRM_TYPE_CHOICES, default="big_law")
+    email = models.EmailField(unique=True, help_text="Primary contact email for the firm")
+    phone = models.CharField(max_length=20, blank=True, null=True)
+    address = models.TextField(blank=True, null=True)
+    logo = models.ImageField(upload_to="firm_logos/", blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    # The senior-most user onboarded by super admin
+    owner = models.OneToOneField(
+        "User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="owned_firm"
+    )
+
+    class Meta:
+        db_table = "firm"
+
+    def __str__(self):
+        return f"{self.name} ({self.id})"
+
+
 # =========================
 # ===== Role Model ========
 # =========================
@@ -40,6 +79,15 @@ class Role(models.Model):
         ("system", "System"),
     ]
 
+    firm = models.ForeignKey(     
+        Firm,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="roles",
+        help_text="Null = system-level default role"
+    )
+
     name = models.CharField(max_length=100, unique=True)
     short_name = models.CharField(max_length=100, choices=ROLE_CHOICES, unique=True)
     description = models.CharField(max_length=255)
@@ -51,12 +99,12 @@ class Role(models.Model):
     is_active = models.BooleanField(default=True)
 
     def __str__(self):
-        return self.short_name
+        return f"{self.short_name} @ {self.firm or 'SYSTEM'}"
 
     class Meta:
         db_table = "role"
         ordering = ["-access_level"]
-
+        unique_together = ("firm", "short_name")
 
 # =========================
 # ===== Permission Model ==
@@ -144,6 +192,15 @@ class User(AbstractUser):
         ("mid_size", "Mid-Sized Firm"),
     ]
 
+    firm = models.ForeignKey( 
+        Firm,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="members",
+        help_text="Null only for super admins"
+    )
+
     role = models.ManyToManyField(Role, related_name="users", blank=True)
     first_name = models.CharField(max_length=50)
     last_name = models.CharField(max_length=50)
@@ -218,6 +275,18 @@ class User(AbstractUser):
         if not roles:
             return 0
         return max(r.access_level for r in roles)
+    
+    def is_firm_owner(self):
+        """Returns True if this user is their firm's owner."""
+        return self.firm is not None and self.firm.owner_id == self.pk
+
+    def can_onboard(self):
+        """Firm owner or anyone with manage_users / full_user_management permission."""
+        return (
+            self.is_firm_owner()
+            or self.has_permission("manage_users")
+            or self.has_permission("full_user_management")
+        )
 
 
 # =========================
@@ -358,3 +427,35 @@ class LoginOtp(models.Model):
 
     class Meta:
         db_table = "login_otp"
+
+
+class FirmInvite(models.Model):
+    """
+    Super admin creates a Firm + sends invite to the senior-most role.
+    That person activates and then invites the rest of their team.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    firm = models.ForeignKey(Firm, on_delete=models.CASCADE, related_name="invites")
+    email = models.EmailField()
+    role = models.ForeignKey(Role, on_delete=models.SET_NULL, null=True)
+    invited_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, related_name="sent_invites"
+    )
+    token = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    is_used = models.BooleanField(default=False)
+    expires_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        if not self.pk:
+            self.expires_at = timezone.now() + timedelta(hours=48)
+        super().save(*args, **kwargs)
+
+    def is_expired(self):
+        return timezone.now() > self.expires_at
+
+    class Meta:
+        db_table = "firm_invite"
+
+    def __str__(self):
+        return f"Invite → {self.email} @ {self.firm.name}"
