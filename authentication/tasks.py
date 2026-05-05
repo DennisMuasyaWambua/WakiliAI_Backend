@@ -136,6 +136,7 @@ def send_firm_owner_invite_async(first_name, email, firm_name, role_name, invite
         print("Gmail SMTP ERROR [firm-owner-invite]:", str(e))
         return False
 
+
 # =========================
 # Team Invite Email
 # =========================
