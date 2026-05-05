@@ -431,7 +431,7 @@ class CreateFirmAPIView(APIView):
 
         invite_link = build_invite_link(request, invite.token)
         send_firm_owner_invite_async.delay(
-            first_name="",           # we don't know their name yet
+            first_name="",
             email=invite.email,
             firm_name=firm.name,
             role_name=invite.role.name,
