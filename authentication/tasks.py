@@ -102,7 +102,6 @@ def send_reset_password_email_async(first_name, email, reset_link):
         print("Gmail SMTP ERROR [reset-password]:", str(e))
         return False
     
-
 # =========================
 # Firm Owner Invite Email
 # =========================
@@ -136,7 +135,6 @@ def send_firm_owner_invite_async(first_name, email, firm_name, role_name, invite
     except Exception as e:
         print("Gmail SMTP ERROR [firm-owner-invite]:", str(e))
         return False
-
 
 # =========================
 # Team Invite Email
