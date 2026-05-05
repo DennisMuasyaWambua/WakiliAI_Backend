@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>{{ title }}</title>
+  <style>
+    body { margin: 0; padding: 0; background-color: #f4f4f7; font-family: Arial, sans-serif; }
+    .wrapper { width: 100%; background-color: #f4f4f7; padding: 40px 0; }
+    .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+    .header { background-color: #1a1a2e; padding: 32px 40px; text-align: center; }
+    .header h1 { color: #ffffff; font-size: 22px; margin: 0; letter-spacing: 1px; }
+    .header span { color: #4f8ef7; }
+    .body { padding: 40px; color: #333333; }
+    .body h2 { font-size: 20px; margin-bottom: 8px; color: #1a1a2e; }
+    .body p { font-size: 15px; line-height: 1.7; color: #555555; margin: 12px 0; }
+    .firm-badge { display: inline-block; background-color: #f0f4ff; border: 1px solid #c7d7fd; border-radius: 6px; padding: 10px 20px; margin: 16px 0; font-size: 15px; color: #1a1a2e; font-weight: bold; }
+    .btn-wrapper { text-align: center; margin: 32px 0; }
+    .btn { display: inline-block; background-color: #4f8ef7; color: #ffffff; text-decoration: none; padding: 14px 36px; border-radius: 6px; font-size: 15px; font-weight: bold; letter-spacing: 0.5px; }
+    .divider { border: none; border-top: 1px solid #eeeeee; margin: 28px 0; }
+    .note { font-size: 13px; color: #999999; margin-top: 24px; }
+    .footer { background-color: #f4f4f7; text-align: center; padding: 24px 40px; font-size: 12px; color: #aaaaaa; }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <div class="container">
+
+      <div class="header">
+        <h1>Wakili<span>AI</span></h1>
+      </div>
+
+      <div class="body">
+        <h2>You've been invited!</h2>
+
+        <p>{{ message }}</p>
+
+        <div class="firm-badge">
+          🏛️ {{ firm_name }} &nbsp;·&nbsp; {{ role_name }}
+        </div>
+
+        <p>Your team at <strong>{{ firm_name }}</strong> is waiting for you. As <strong>{{ role_name }}</strong>, you'll have access to WakiliAI's full suite of legal practice management tools.</p>
+
+        <p>Click the button below to accept your invitation and set up your account. This invitation expires in <strong>48 hours</strong>.</p>
+
+        <div class="btn-wrapper">
+          <a href="{{ invite_link }}" class="btn">{{ action }}</a>
+        </div>
+
+        <hr class="divider"/>
+
+        <p>If the button doesn't work, copy and paste this link into your browser:</p>
+        <p style="word-break: break-all; font-size: 13px; color: #4f8ef7;">{{ invite_link }}</p>
+
+        <p class="note">If you did not expect this invitation, you can safely ignore this email. Your account will not be created unless you click the link above.</p>
+      </div>
+
+      <div class="footer">
+        &copy; {{ now.year }} WakiliAI. All rights reserved.<br/>
+        This is an automated message — please do not reply.
+      </div>
+
+    </div>
+  </div>
+</body>
+</html>
