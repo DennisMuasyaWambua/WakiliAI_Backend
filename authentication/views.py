@@ -67,11 +67,10 @@ class RegisterAPIView(APIView):
 
         user = serializer.save()
 
-        # Create activation token and send email
-        # activation = ActivationToken.objects.create(user=user)
-        # uid = encode_uid(user.pk)
-        # activation_link = build_activation_link(request, uid, activation.token)
-        # send_activation_email_async.delay(user.first_name, user.email, activation_link)
+        activation = ActivationToken.objects.create(user=user)
+        uid = encode_uid(user.pk)
+        activation_link = build_activation_link(request, uid, activation.token)
+        send_activation_email_async.delay(user.first_name, user.email, activation_link)
 
         return Response(
             {
