@@ -157,7 +157,8 @@ class LoginAPIView(APIView):
             )
 
         # If MFA is enabled, send OTP instead of tokens
-        if user.is_mfa:
+        print("This is the mfa status: ", user.is_mfa)
+        if user.is_mfa == 1:
             otp = generate_otp()
             LoginOtp.objects.filter(user=user, used=0).update(used=1)
             LoginOtp.objects.create(user=user, otp=otp)
