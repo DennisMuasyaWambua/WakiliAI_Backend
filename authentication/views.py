@@ -171,27 +171,27 @@ class LoginAPIView(APIView):
                 },
                 status=status.HTTP_200_OK
             )
-
-        tokens = get_tokens_for_user(user)
-        return Response(
-            {
-                "success": True,
-                "mfa_required": False,
-                "message": "Login successful.",
-                "data": {
-                    "user": {
-                        "id": user.id,
-                        "email": user.email,
-                        "full_name": user.get_full_name(),
-                        "firm_type": user.firm_type,
-                        "roles": list(user.role.values_list("short_name", flat=True)),
-                        "access_level": user.get_access_level(),
+        else:
+            tokens = get_tokens_for_user(user)
+            return Response(
+                {
+                    "success": True,
+                    "mfa_required": False,
+                    "message": "Login successful.",
+                    "data": {
+                        "user": {
+                            "id": user.id,
+                            "email": user.email,
+                            "full_name": user.get_full_name(),
+                            "firm_type": user.firm_type,
+                            "roles": list(user.role.values_list("short_name", flat=True)),
+                            "access_level": user.get_access_level(),
+                        },
+                        "tokens": tokens,
                     },
-                    "tokens": tokens,
                 },
-            },
-            status=status.HTTP_200_OK
-        )
+                status=status.HTTP_200_OK
+            )
 
 
 # =========================
